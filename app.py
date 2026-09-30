@@ -68,7 +68,6 @@ class NumberedCanvas(canvas.Canvas):
         self.saveState()
         self.setFont(FONT_NAME, 8)
         self.setFillColor(colors.HexColor("#1E293B"))
-        # A4横の幅（841.89）の中央にページ番号を配置
         self.drawCentredString(841.89 / 2.0, 20, f"{self._pageNumber} / {page_count}")
         self.restoreState()
 
@@ -77,14 +76,13 @@ class NumberedCanvas(canvas.Canvas):
 # ==========================================================
 def generate_purchase_order_pdf(supplier_name, order_data, target_date_str):
     buffer = io.BytesIO()
-    # A4横サイズ（landscape）を設定。左右マージン30で有効幅は 781.89
     doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), leftMargin=30, rightMargin=30, topMargin=30, bottomMargin=30)
 
     # スタイル定義
     style_title = ParagraphStyle("Title", fontName=FONT_NAME, fontSize=16, leading=20, alignment=1, textColor=colors.HexColor("#000000"))
     style_meta = ParagraphStyle("Meta", fontName=FONT_NAME, fontSize=8, leading=11, alignment=2, textColor=colors.HexColor("#000000"))
     style_supplier = ParagraphStyle("Supp", fontName=FONT_NAME, fontSize=11, leading=15, textColor=colors.HexColor("#000000"))
-    style_company = ParagraphStyle("Comp", fontName=FONT_NAME, fontSize=9, leading=13, textColor=colors.HexColor("#000000"))
+    style_company = ParagraphStyle("Comp", fontName=FONT_NAME, fontSize=8.5, leading=12, textColor=colors.HexColor("#000000"))
     style_company_right = ParagraphStyle("CompR", fontName=FONT_NAME, fontSize=8, leading=11, alignment=0, textColor=colors.HexColor("#000000"))
     style_th = ParagraphStyle("TH", fontName=FONT_NAME, fontSize=8, leading=10, textColor=colors.black, alignment=1)
     style_td = ParagraphStyle("TD", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.black)
@@ -92,7 +90,6 @@ def generate_purchase_order_pdf(supplier_name, order_data, target_date_str):
 
     elements = []
 
-    # --- ヘルパー：横線 ---
     def h_line(height=1, color=colors.black):
         t = Table([['']], colWidths=[781], rowHeights=[height])
         t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), color)]))
@@ -108,7 +105,7 @@ def generate_purchase_order_pdf(supplier_name, order_data, target_date_str):
     elements.append(Paragraph(meta_text, style_meta))
     elements.append(Spacer(1, 10))
 
-    # 2. 宛先 ＆ 自社情報セクション（A4横幅に合わせて分割）
+    # 2. 宛先 ＆ 自社情報セクション
     supp_para = Paragraph(f"<b>{supplier_name}</b> 様", style_supplier)
     
     company_info_html = (
@@ -128,23 +125,29 @@ def generate_purchase_order_pdf(supplier_name, order_data, target_date_str):
     elements.append(h_line(1.5, colors.HexColor("#000000")))
     elements.append(Spacer(1, 8))
 
-    # 3. 条件欄 ＆ ご挨拶文
+    # 3. 条件欄（納期・納品先・住所など） ＆ ご挨拶文
+    # グループ内の最初（あるいは代表）の明細から納品先・住所を取得
+    first_item = order_data["明細"][0] if order_data["明細"] else {}
+    delivery_place = first_item.get("納品先", "")
+    delivery_address = first_item.get("納品先住所", "")
+
     conditions_html = (
         "納期： 記載の通り ／ 運賃： 含む<br/>"
+        f"納品先： {delivery_place}<br/>"
+        f"住所： {delivery_address}<br/>"
         "受渡場所： 打合せ ／ お支払条件： 従来通り"
     )
     cond_para = Paragraph(conditions_html, style_company)
     msg_para = Paragraph("※下記の通りご注文申し上げます。", style_company)
 
-    cond_table = Table([[cond_para, msg_para]], colWidths=[350, 431])
+    cond_table = Table([[cond_para, msg_para]], colWidths=[380, 401])
     cond_table.setStyle(TableStyle([
         ('VALIGN', (0,0), (-1,-1), 'TOP'),
     ]))
     elements.append(cond_table)
     elements.append(Spacer(1, 8))
 
-    # 4. 詳細明細表（8カラム構成・A4横の幅 781 に合わせて拡張）
-    # 合計幅: 60+100+200+100+100+60+41+120 = 781
+    # 4. 詳細明細表（8カラム構成）
     table_data = [[
         Paragraph("区分", style_th),
         Paragraph("図番", style_th),
@@ -168,8 +171,7 @@ def generate_purchase_order_pdf(supplier_name, order_data, target_date_str):
             Paragraph(str(item.get("希望納期", target_date_str)), style_td),
         ])
 
-    # 最低でも12行分の見た目を確保
-    while len(table_data) < 13:
+    while len(table_data) < 12:
         table_data.append([Paragraph("", style_td)] * 8)
 
     details_table = Table(table_data, colWidths=[60, 100, 200, 100, 100, 60, 41, 120], repeatRows=1)
@@ -183,7 +185,7 @@ def generate_purchase_order_pdf(supplier_name, order_data, target_date_str):
     elements.append(details_table)
     elements.append(Spacer(1, 10))
 
-    # 5. 備考欄（A4横幅いっぱい）
+    # 5. 備考欄
     memo_header = Paragraph("<b>備考</b>", style_td)
     memo_content = Paragraph("現型支給", style_td)
     
@@ -206,7 +208,7 @@ def generate_purchase_order_pdf(supplier_name, order_data, target_date_str):
 @app.route('/api/generate-po', methods=['POST'])
 def api_generate_po():
     data = request.json or {}
-    target_date_str = data.get('target_date') # 例: "2026/09/07"
+    target_date_str = data.get('target_date')
     
     if not target_date_str:
         return jsonify({"error": "対象の注文日が指定されていません。"}), 400
@@ -254,6 +256,9 @@ def api_generate_po():
                 "数量": qty,
                 "単位": "個",
                 "希望納期": target_date_str,
+                # ★ ご指定の納品先（field-28）と住所（field-29）を追加
+                "納品先": extract_val(inner.get("field-28", "")),
+                "納品先住所": extract_val(inner.get("field-29", "")),
             })
 
         if not parsed_list:
