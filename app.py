@@ -9,7 +9,7 @@ import requests
 
 # ReportLab関連
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
@@ -45,7 +45,7 @@ def extract_val(raw_val):
     return str(raw_val).strip()
 
 # ==========================================================
-# 3. Canvas（総ページ数自動付与）
+# 3. Canvas（総ページ数自動付与・A4横対応）
 # ==========================================================
 class NumberedCanvas(canvas.Canvas):
     def __init__(self, *args, **kwargs):
@@ -66,68 +66,142 @@ class NumberedCanvas(canvas.Canvas):
 
     def draw_page_number(self, page_count):
         self.saveState()
-        self.setFont(FONT_NAME, 8.5)
+        self.setFont(FONT_NAME, 8)
         self.setFillColor(colors.HexColor("#1E293B"))
-        self.drawCentredString(595.27 / 2.0, 20, f"{self._pageNumber} / {page_count}")
+        # A4横の幅（841.89）の中央にページ番号を配置
+        self.drawCentredString(841.89 / 2.0, 20, f"{self._pageNumber} / {page_count}")
         self.restoreState()
 
 # ==========================================================
-# 4. 発注書PDF生成ロジック
+# 4. A4横 発注書PDF生成ロジック
 # ==========================================================
 def generate_purchase_order_pdf(supplier_name, order_data, target_date_str):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40)
+    # A4横サイズ（landscape）を設定。左右マージン30で有効幅は 781.89
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), leftMargin=30, rightMargin=30, topMargin=30, bottomMargin=30)
 
-    title_style = ParagraphStyle("Title", fontName=FONT_NAME, fontSize=18, leading=22, textColor=colors.HexColor("#1E3A8A"))
-    sub_style = ParagraphStyle("Sub", fontName=FONT_NAME, fontSize=9, leading=12, textColor=colors.HexColor("#3B82F6"), alignment=2)
-    th_style = ParagraphStyle("TH", fontName=FONT_NAME, fontSize=8, leading=10, textColor=colors.white, alignment=1)
-    td_text = ParagraphStyle("TDText", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.HexColor("#1E293B"))
-    td_right = ParagraphStyle("TDRight", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.HexColor("#1E293B"), alignment=2)
+    # スタイル定義
+    style_title = ParagraphStyle("Title", fontName=FONT_NAME, fontSize=16, leading=20, alignment=1, textColor=colors.HexColor("#000000"))
+    style_meta = ParagraphStyle("Meta", fontName=FONT_NAME, fontSize=8, leading=11, alignment=2, textColor=colors.HexColor("#000000"))
+    style_supplier = ParagraphStyle("Supp", fontName=FONT_NAME, fontSize=11, leading=15, textColor=colors.HexColor("#000000"))
+    style_company = ParagraphStyle("Comp", fontName=FONT_NAME, fontSize=9, leading=13, textColor=colors.HexColor("#000000"))
+    style_company_right = ParagraphStyle("CompR", fontName=FONT_NAME, fontSize=8, leading=11, alignment=0, textColor=colors.HexColor("#000000"))
+    style_th = ParagraphStyle("TH", fontName=FONT_NAME, fontSize=8, leading=10, textColor=colors.black, alignment=1)
+    style_td = ParagraphStyle("TD", fontName=FONT_NAME, fontSize=8, leading=11, textColor=colors.black)
+    style_td_right = ParagraphStyle("TDR", fontName=FONT_NAME, fontSize=8, leading=11, alignment=2, textColor=colors.black)
 
-    elements = [
-        Paragraph("<b>御 発 注 書 (PO)</b>", title_style),
-        Paragraph(f"注文日指定: {target_date_str}", sub_style),
-        Spacer(1, 10),
-        Paragraph(f"<b>{supplier_name} 御中</b>", ParagraphStyle("Supp", fontName=FONT_NAME, fontSize=12, leading=16)),
-        Spacer(1, 10)
-    ]
+    elements = []
 
+    # --- ヘルパー：横線 ---
+    def h_line(height=1, color=colors.black):
+        t = Table([['']], colWidths=[781], rowHeights=[height])
+        t.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), color)]))
+        return t
+
+    # 1. タイトル行 ＆ 管理番号・発注日
+    elements.append(Paragraph("<b>注文書</b>", style_title))
+    elements.append(Spacer(1, 2))
+    elements.append(h_line(2, colors.HexColor("#666666")))
+    elements.append(Spacer(1, 5))
+
+    meta_text = f"管理番号 3016<br/>発注日 {target_date_str}"
+    elements.append(Paragraph(meta_text, style_meta))
+    elements.append(Spacer(1, 10))
+
+    # 2. 宛先 ＆ 自社情報セクション（A4横幅に合わせて分割）
+    supp_para = Paragraph(f"<b>{supplier_name}</b> 様", style_supplier)
+    
+    company_info_html = (
+        "<b>株式会社 キャステム</b><br/>"
+        "〒275-0016 千葉県習志野市津田沼7-18-25<br/>"
+        "TEL 047-452-9541 FAX 047-451-5843<br/>"
+        "MAIL info@castem.info"
+    )
+    comp_para = Paragraph(company_info_html, style_company_right)
+
+    header_table = Table([[supp_para, comp_para]], colWidths=[380, 401])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+    ]))
+    elements.append(header_table)
+    elements.append(h_line(1.5, colors.HexColor("#000000")))
+    elements.append(Spacer(1, 8))
+
+    # 3. 条件欄 ＆ ご挨拶文
+    conditions_html = (
+        "納期： 記載の通り ／ 運賃： 含む<br/>"
+        "受渡場所： 打合せ ／ お支払条件： 従来通り"
+    )
+    cond_para = Paragraph(conditions_html, style_company)
+    msg_para = Paragraph("※下記の通りご注文申し上げます。", style_company)
+
+    cond_table = Table([[cond_para, msg_para]], colWidths=[350, 431])
+    cond_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+    ]))
+    elements.append(cond_table)
+    elements.append(Spacer(1, 8))
+
+    # 4. 詳細明細表（8カラム構成・A4横の幅 781 に合わせて拡張）
+    # 合計幅: 60+100+200+100+100+60+41+120 = 781
     table_data = [[
-        Paragraph("注文日", th_style), Paragraph("部番 / 注文番号", th_style),
-        Paragraph("品名 / 材質", th_style), Paragraph("数量", th_style),
-        Paragraph("発注単価", th_style), Paragraph("金額（税別）", th_style),
+        Paragraph("区分", style_th),
+        Paragraph("図番", style_th),
+        Paragraph("品名", style_th),
+        Paragraph("注文番号", style_th),
+        Paragraph("材質", style_th),
+        Paragraph("数量", style_th),
+        Paragraph("単位", style_th),
+        Paragraph("希望納期", style_th),
     ]]
 
     for item in order_data["明細"]:
-        dwg_ord = []
-        if item["部番"]: dwg_ord.append(item["部番"])
-        if item["図面番号/注文番号"]: dwg_ord.append(f"({item['図面番号/注文番号']})")
-        name_mat = item["品名"]
-        if item["材質"]: name_mat += f" [{item['材質']}]"
-
         table_data.append([
-            Paragraph(str(item["注文日"]), td_text),
-            Paragraph(" ".join(dwg_ord), td_text),
-            Paragraph(name_mat, td_text),
-            Paragraph(f"{item['数量']:,}", td_right),
-            Paragraph(f"￥{item['発注単価']:,}", td_right),
-            Paragraph(f"￥{item['金額']:,}", td_right),
+            Paragraph(str(item.get("区分", "済み")), style_td),
+            Paragraph(str(item.get("図番", "")), style_td),
+            Paragraph(str(item.get("品名", "")), style_td),
+            Paragraph(str(item.get("注文番号", "")), style_td),
+            Paragraph(str(item.get("材質", "")), style_td),
+            Paragraph(f"{item['数量']:,}", style_td_right),
+            Paragraph(str(item.get("単位", "個")), style_td),
+            Paragraph(str(item.get("希望納期", target_date_str)), style_td),
         ])
 
-    details_table = Table(table_data, colWidths=[65, 110, 160, 45, 60, 75], repeatRows=1)
+    # 最低でも12行分の見た目を確保
+    while len(table_data) < 13:
+        table_data.append([Paragraph("", style_td)] * 8)
+
+    details_table = Table(table_data, colWidths=[60, 100, 200, 100, 100, 60, 41, 120], repeatRows=1)
     details_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1E3A8A")),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor("#CBD5E1")),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#64748B")),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
     ]))
     elements.append(details_table)
+    elements.append(Spacer(1, 10))
+
+    # 5. 備考欄（A4横幅いっぱい）
+    memo_header = Paragraph("<b>備考</b>", style_td)
+    memo_content = Paragraph("現型支給", style_td)
+    
+    memo_table = Table([[memo_header], [memo_content]], colWidths=[781], rowHeights=[15, 30])
+    memo_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#64748B")),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(memo_table)
 
     doc.build(elements, canvasmaker=NumberedCanvas)
     buffer.seek(0)
     return buffer
 
 # ==========================================================
-# 5. APIエンドポイント（@pocketのJSから呼ばれる）
+# 5. APIエンドポイント
 # ==========================================================
 @app.route('/api/generate-po', methods=['POST'])
 def api_generate_po():
@@ -141,7 +215,6 @@ def api_generate_po():
     if not api_key:
         return jsonify({"error": "サーバー側のAPIキーが設定されていません。"}), 500
 
-    # @pocket APIのクエリ仕様に合わせて YYYY-MM-DD に変換
     formatted_date_str = target_date_str.replace('/', '-')
 
     url = "https://app060.at-pocket.com/seihon03_bb/api/apps/31/records"
@@ -169,16 +242,18 @@ def api_generate_po():
                 except: return 0.0
 
             qty = safe_float(inner.get("field-13", 0))
-            cost_price = safe_float(inner.get("field-19", 0))
-            amount = qty * cost_price
 
             parsed_list.append({
-                "発注先名": supplier, "注文日": target_date_str,
-                "部番": extract_val(inner.get("field-9", "")),
+                "発注先名": supplier, 
+                "注文日": target_date_str,
+                "区分": extract_val(inner.get("field-8", "済み")),
+                "図番": extract_val(inner.get("field-9", "")),
                 "品名": extract_val(inner.get("field-10", "")),
+                "注文番号": extract_val(inner.get("field-11", "")),
                 "材質": extract_val(inner.get("field-12", "")),
-                "図面番号/注文番号": extract_val(inner.get("field-11", "")),
-                "数量": qty, "発注単価": cost_price, "金額": amount,
+                "数量": qty,
+                "単位": "個",
+                "希望納期": target_date_str,
             })
 
         if not parsed_list:
@@ -191,7 +266,6 @@ def api_generate_po():
         
         order_data = {
             "明細": supplier_group.to_dict(orient="records"),
-            "発注金額合計": int(supplier_group["金額"].sum()),
             "件数": len(supplier_group)
         }
 
