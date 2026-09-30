@@ -137,20 +137,20 @@ def api_generate_po():
     if not target_date_str:
         return jsonify({"error": "対象の注文日が指定されていません。"}), 400
 
-    # Secrets（または環境変数）からAPIキーを安全に取得
     api_key = os.environ.get("app31_api_key", os.environ.get("pockets_api_key", ""))
     if not api_key:
         return jsonify({"error": "サーバー側のAPIキーが設定されていません。"}), 500
 
-    # @pocket APIからデータ取得 (アプリID: 31 / 注文日: field-7)
+    # @pocket APIのクエリ仕様に合わせて YYYY-MM-DD に変換
+    formatted_date_str = target_date_str.replace('/', '-')
+
     url = "https://app060.at-pocket.com/seihon03_bb/api/apps/31/records"
     headers = {"X-At-Pocket-API-Key": api_key, "Accept": "application/json"}
-    params = {"query": f'field-7 = "{target_date_str}"'}
+    params = {"query": f'field-7 = "{formatted_date_str}"'}
 
     try:
         res = requests.get(url, headers=headers, params=params, timeout=15)
         
-        # ★ ここで at-pocket からエラーが返ってきた場合、その理由を画面にそのまま返すようにしました
         if res.status_code != 200:
             err_msg = f"@pocket APIエラー ({res.status_code}): {res.text}"
             print(err_msg)
@@ -158,7 +158,6 @@ def api_generate_po():
 
         records = res.json().get("records", res.json().get("data", []))
 
-        # 発注先名別（field-3）に集計・グループ化
         parsed_list = []
         for r in records:
             inner = r.get("record", r)
@@ -187,7 +186,6 @@ def api_generate_po():
 
         df = pd.DataFrame(parsed_list)
         
-        # 最初の発注先のPDFを生成して返す
         first_supplier = df["発注先名"].iloc[0]
         supplier_group = df[df["発注先名"] == first_supplier]
         
