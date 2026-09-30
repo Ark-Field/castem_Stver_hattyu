@@ -1,6 +1,7 @@
 from datetime import date
 import io
 import os
+import traceback
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 import pandas as pd
@@ -141,16 +142,19 @@ def api_generate_po():
     if not api_key:
         return jsonify({"error": "サーバー側のAPIキーが設定されていません。"}), 500
 
-    # @pocket APIからデータ取得 (アプリID: 31)
-    # 注文日フィールドを field-6 から field-7 に修正
+    # @pocket APIからデータ取得 (アプリID: 31 / 注文日: field-7)
     url = "https://app060.at-pocket.com/seihon03_bb/api/apps/31/records"
     headers = {"X-At-Pocket-API-Key": api_key, "Accept": "application/json"}
     params = {"query": f'field-7 = "{target_date_str}"'}
 
     try:
         res = requests.get(url, headers=headers, params=params, timeout=15)
+        
+        # ★ ここで at-pocket からエラーが返ってきた場合、その理由を画面にそのまま返すようにしました
         if res.status_code != 200:
-            return jsonify({"error": f"@pocket APIエラー: {res.status_code}"}), 500
+            err_msg = f"@pocket APIエラー ({res.status_code}): {res.text}"
+            print(err_msg)
+            return jsonify({"error": err_msg}), 500
 
         records = res.json().get("records", res.json().get("data", []))
 
@@ -179,7 +183,7 @@ def api_generate_po():
             })
 
         if not parsed_list:
-            return jsonify({"error": "指定された注文日に該当するデータがありません。"}), 404
+            return jsonify({"error": f"指定された注文日 ({target_date_str}) に該当するデータがありません。"}), 404
 
         df = pd.DataFrame(parsed_list)
         
@@ -203,12 +207,9 @@ def api_generate_po():
         )
 
     except Exception as e:
-        import traceback
         err_detail = traceback.format_exc()
-        print("=== サーバー側エラー詳細 ===")
         print(err_detail)
-        # ★エラーの発生源と内容をそのまま画面に返すことで、原因が一発で分かります
-        return jsonify({"error": f"サーバー内部エラー: {str(e)} | 詳細: {err_detail}"}), 500
+        return jsonify({"error": f"サーバー内部エラー: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
