@@ -131,21 +131,21 @@ def generate_purchase_order_pdf(supplier_name, order_data, target_date_str):
 @app.route('/api/generate-po', methods=['POST'])
 def api_generate_po():
     data = request.json or {}
-    target_date_str = data.get('target_date') # 例: "2026-10-01"
+    target_date_str = data.get('target_date') # 例: "2026/09/07"
     
     if not target_date_str:
         return jsonify({"error": "対象の注文日が指定されていません。"}), 400
 
     # Secrets（または環境変数）からAPIキーを安全に取得
-    # クラウド環境の環境変数、またはシークレットから読み込み
     api_key = os.environ.get("app31_api_key", os.environ.get("pockets_api_key", ""))
     if not api_key:
         return jsonify({"error": "サーバー側のAPIキーが設定されていません。"}), 500
 
     # @pocket APIからデータ取得 (アプリID: 31)
+    # 注文日フィールドを field-6 から field-7 に修正
     url = "https://app060.at-pocket.com/seihon03_bb/api/apps/31/records"
     headers = {"X-At-Pocket-API-Key": api_key, "Accept": "application/json"}
-    params = {"query": f'field-6 = "{target_date_str}"'}
+    params = {"query": f'field-7 = "{target_date_str}"'}
 
     try:
         res = requests.get(url, headers=headers, params=params, timeout=15)
@@ -183,7 +183,7 @@ def api_generate_po():
 
         df = pd.DataFrame(parsed_list)
         
-        # 最初の発注先のPDFを生成して返す（複数社ある場合はzip等に拡張可能ですがまずは代表例）
+        # 最初の発注先のPDFを生成して返す
         first_supplier = df["発注先名"].iloc[0]
         supplier_group = df[df["発注先名"] == first_supplier]
         
@@ -199,7 +199,7 @@ def api_generate_po():
             pdf_buffer,
             mimetype='application/pdf',
             as_attachment=True,
-            download_name=f"発注書_{first_supplier}_{target_date_str.replace('-', '')}.pdf"
+            download_name=f"発注書_{first_supplier}_{target_date_str.replace('/', '')}.pdf"
         )
 
     except Exception as e:
