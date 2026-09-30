@@ -203,7 +203,10 @@ def api_generate_po():
         )
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        err_detail = traceback.format_exc()
+        print(err_detail) # Renderのログにも出力
+        return jsonify({"error": f"Python例外発生: {str(e)} \n詳細: {err_detail}"}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
